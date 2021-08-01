@@ -43,7 +43,7 @@ func startServer(config *appCfg) {
 				return nil
 			}
 			opts := x509.VerifyOptions{
-				DNSName:       config.remoteHostname, // dafault is cs.ServerName,
+				DNSName:       config.remoteHostname, // default is cs.ServerName,
 				Intermediates: x509.NewCertPool(),
 			}
 			for _, cert := range cs.PeerCertificates[1:] {

@@ -19,6 +19,8 @@ const FAKE_SNI       = "vk.com"
 const LISTEN_ADDRESS = "127.0.0.1"
 const LISTEN_PORT    = 56789
 
+var Version = "v0.0" // updated automatically
+
 type appCfg struct {
 	listenAddress  string
 	listenPort     int
@@ -29,25 +31,23 @@ type appCfg struct {
 	ignoreCert     bool
 }
 
-func runBrowser(u string, remoteHostname string) {
-	platform := runtime.GOOS
-	log.Print("The " + platform + " platform")
-	duration := 2 * time.Second
-	time.Sleep(duration)
-	fmt.Println("Access to '" + remoteHostname + "' via the following URL: " + u)
+func runBrowser(u string, prompt string) {
+	time.Sleep(1 * time.Second)
+	fmt.Println(prompt)
 	// https://dwheeler.com/essays/open-files-urls.html
 	var cmd string
 	var arg string
-	if platform == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		cmd = "cmd"
 		arg = "/c start " + u
-	} else if platform == "darwin" {
+	case "darwin":
 		cmd = "open"
 		arg = u
-	} else if platform == "linux" {
+	case "linux":
 		cmd = "xdg-open"
 		arg = u
-	} else {
+	default:
 		return
 	}
 	err := exec.Command(cmd, arg).Start()
@@ -57,6 +57,7 @@ func runBrowser(u string, remoteHostname string) {
 }
 
 func main() {
+	log.Print("Starting FakeSNI " + Version)
 	listenAddress  := flag.String("addr", LISTEN_ADDRESS, "Local address. Set to 0.0.0.0 for listen all network interfaces")
 	listenPort     := flag.Int("port", LISTEN_PORT, "Port to run on")
 	remoteHostname := flag.String("host", DEFAULT_HOST, "Remote hostname")
@@ -73,14 +74,18 @@ func main() {
 		fakeSni:        *fakeSni,
 		ignoreCert:     *ignoreCert,
 	}
+	log.Print("Using SNI value '" + config.fakeSni + "'")
+	if config.ignoreCert {
+		log.Print("Verify site certificate disabled")
+	}
 	ip, err := getIp(config.remoteHostname)
 	if err != nil {
-		fmt.Println("Can't resolve '" + config.remoteHostname + "':", err)
 		if config.remoteHostname != DEFAULT_HOST  {
-			panic("IP address not detected")
+			log.Fatal(err)
 		}
 		config.remoteIp = DEFAULT_IP
-		fmt.Println("Using default IP - " + DEFAULT_IP)
+		log.Print("Can't resolve '" + config.remoteHostname + "':", err)
+		log.Print("Using default IP - " + DEFAULT_IP)
 	} else {
 		config.remoteIp = ip
 		log.Print("Found IP address for '" + config.remoteHostname + "' - " + ip)
@@ -90,10 +95,11 @@ func main() {
 		h = "127.0.0.1"
 	}
 	u := fmt.Sprintf("http://%s:%d", h, config.listenPort)
+	prompt := "\r\nAccess to '" + config.remoteHostname + "' via the following URL: " + u
 	if *nobrowser {
-		fmt.Println("Access to '" + config.remoteHostname + "' via the following URL: " + u)
+		fmt.Println(prompt)
 	} else {
-		go runBrowser(u, config.remoteHostname)
+		go runBrowser(u, prompt)
 	}
 	startServer(config)
 }
