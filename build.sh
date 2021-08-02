@@ -1,74 +1,74 @@
 # https://www.digitalocean.com/community/tutorials/how-to-build-go-executables-for-multiple-platforms-on-ubuntu-16-04
 
-VERSION=1.0
+VERSION=v1.0
 
 export CGO_ENABLED=0
+export GO386=softfloat
+
+BUILD_DIR=../fakesni_${VERSION}
+mkdir ${BUILD_DIR}
+
+go_build() {
+  go build -v -o ${FN} -ldflags="-X 'main.Version=${VERSION}'" ./*.go
+}
 
 # linux
 
-GOOS=linux
-GOARCH=amd64
 FN=fakesni
-echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.xz ${FN} readme.txt
 
-GOOS=linux
-GOARCH=386
-FN=fakesni
+export GOOS=linux
+export GOARCH=amd64
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} GO386=softfloat go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.xz ${FN} readme.txt
+go_build
+tar -czf ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.gz ${FN} readme.txt
 
-GOOS=linux
-GOARCH=arm
-FN=fakesni
+export GOOS=linux
+export GOARCH=386
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.xz ${FN} readme.txt
+go_build
+tar -czf ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.gz ${FN} readme.txt
 
-GOOS=linux
-GOARCH=arm64
-FN=fakesni
+export GOOS=linux
+export GOARCH=arm
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.xz ${FN} readme.txt
+go_build
+tar -czf ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.tar.gz ${FN} readme.txt
 
 rm ${FN}
 
 # mac
 
-GOOS=darwin
-GOARCH=amd64
 FN=fakesni
-echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_mac_${GOARCH}.tar.xz ${FN} readme.txt
 
-GOOS=darwin
-GOARCH=arm64
-FN=fakesni
+export GOOS=darwin
+export GOARCH=amd64
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-tar cfJ bin/fakesni_${VERSION}_mac_${GOARCH}.tar.xz ${FN} readme.txt
+go_build
+tar -czf ${BUILD_DIR}/fakesni_${VERSION}_mac_intel.tar.gz ${FN} readme.txt
+
+export GOOS=darwin
+export GOARCH=arm64
+echo ${GOOS} ${GOARCH}
+go_build
+tar -czf ${BUILD_DIR}/fakesni_${VERSION}_mac_${GOARCH}.tar.gz ${FN} readme.txt
 
 rm ${FN}
 
 # windows
 
-GOOS=windows
-GOARCH=amd64
 FN=fakesni.exe
+
+export GOOS=windows
+export GOARCH=amd64
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} go build -o ${FN} ./*.go
-zip -9 -q bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
+go_build
+zip -9 -q ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
 
 
-GOOS=windows
-GOARCH=386
-FN=fakesni.exe
+export GOOS=windows
+export GOARCH=386
 echo ${GOOS} ${GOARCH}
-env GOOS=${GOOS} GOARCH=${GOARCH} GO386=softfloat go build -o ${FN} ./*.go
-zip -9 -q bin/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
+go_build
+zip -9 -q ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
 
 rm ${FN}
