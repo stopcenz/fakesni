@@ -1,4 +1,4 @@
-module github.com/nemo.rto
+module github.com/stopcenz/fakesni
 
 go 1.16
 
