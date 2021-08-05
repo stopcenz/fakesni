@@ -22,13 +22,11 @@ func fetch(config *appCfg,
 		return nil, err
 	}
 	reqest.Header = r.Header
+	reqest.Header.Del("Accept-Encoding")
 	reqest.Host = config.remoteHostname
 	response, err := client.Do(reqest)
-	if err != nil {
-		return nil, err
-	}
-	//log.Printf("%s %s %d", r.Method, u, response.StatusCode)
-	return response, nil
+	//log.Printf("%s %s", r.Method, u)
+	return response, err
 }
 
 func startServer(config *appCfg) {
@@ -57,7 +55,6 @@ func startServer(config *appCfg) {
 		MaxIdleConns:           1,
 		IdleConnTimeout:        10 * time.Second,
 		TLSClientConfig:        tlsConfig,
-		DisableCompression:     true, // disable unpack body
 		MaxResponseHeaderBytes: 0xffff,
 		WriteBufferSize:        0xffff,
 		ReadBufferSize:         0xffff,
@@ -74,7 +71,7 @@ func startServer(config *appCfg) {
 			http.Error(w, "Proxy error\r\n" + err.Error(), 500)
 			return
 		}
-		convertResponse(config, response, w)
+		convertResponse(config, response, w, r)
 	})
 	addr := fmt.Sprintf("%s:%d", config.listenAddress, config.listenPort)
 	log.Print("Listen " + addr)

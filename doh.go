@@ -3,7 +3,6 @@ package main
 import (
     "context"
     "errors"
-    //"fmt"
     "time"
     "github.com/likexian/doh-go"
     "github.com/likexian/doh-go/dns"
@@ -29,7 +28,6 @@ func getIp(hostname string) (ip string, err error) {
 	    if len(a.Data) > 0 {
 	      return a.Data, nil
 	    }
-	    //fmt.Printf("%s -> %s\n", a.Name, a.Data)
 	}
-	return "", errors.New("empty response")
+	return "", errors.New("DoH: empty response")
 }
