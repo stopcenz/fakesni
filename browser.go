@@ -1,17 +1,21 @@
 package main
 
 import (
-    "fmt"
-    "log"
-    "os/exec"
-    "runtime"
-    "time"
+	"fmt"
+	"log"
+	"os/exec"
+	"runtime"
+	"time"
 )
 
-
-func runBrowser(u string, prompt string) {
+func browserStart(config *Config) {
 	time.Sleep(1 * time.Second)
-	fmt.Println(prompt)
+	alias := config.Aliases[0]
+	u := fmt.Sprintf("http://" + alias.Addr)
+	fmt.Println("\r\nAccess to " + alias.Hostname + " via the following URL: " + u)
+	if config.NoBrowser {
+		return
+	}
 	// https://dwheeler.com/essays/open-files-urls.html
 	var cmd string
 	var arg string

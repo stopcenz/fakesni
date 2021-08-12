@@ -1,6 +1,6 @@
 # https://www.digitalocean.com/community/tutorials/how-to-build-go-executables-for-multiple-platforms-on-ubuntu-16-04
 
-VERSION=v1.1
+VERSION=v1.2
 
 export CGO_ENABLED=0
 export GO386=softfloat
@@ -57,11 +57,6 @@ FN=fakesni.exe
 export GOOS=windows
 
 export GOARCH=amd64
-echo ${GOOS} ${GOARCH}
-go_build
-zip -9 -q ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
-
-export GOARCH=386
 echo ${GOOS} ${GOARCH}
 go_build
 zip -9 -q ${BUILD_DIR}/fakesni_${VERSION}_${GOOS}_${GOARCH}.zip ${FN} readme.txt
