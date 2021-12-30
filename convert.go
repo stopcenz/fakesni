@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -91,11 +92,29 @@ func convertLocation(aliases Aliases, value string) string {
 	return convertUrl(aliases, value)
 }
 
+func decode(response *http.Response) (io.Reader, error) {
+	encoding := response.Header.Get("Content-Encoding")
+	if encoding == "" {
+		return response.Body, nil
+	}
+	re := regexp.MustCompile(`(?i)(^|,| )gzip($|,| )`)
+	if !re.MatchString(encoding) {
+		return response.Body, nil
+	}
+	return gzip.NewReader(response.Body)
+}
+
 func convertHtml(aliases   Aliases,
                  response *http.Response,
                  w         http.ResponseWriter) {
 
-	body, err := ioutil.ReadAll(response.Body)
+	reader, err := decode(response)
+	if err != nil {
+		log.Print("Error: decode: " + err.Error())
+		http.Error(w, err.Error(), 500)
+		return
+	}	
+	body, err := ioutil.ReadAll(reader)
 	if err != nil {
 		log.Print("Error: convert: " + err.Error())
 		http.Error(w, err.Error(), 500)
@@ -112,6 +131,7 @@ func convertHtml(aliases   Aliases,
 		u = []byte(convertUrl(aliases, string(u)))
 		return append(append(head, u...), tail...)
 	})
+	w.Header().Del("Content-Encoding")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	w.WriteHeader(response.StatusCode)
 	 _, err = io.Copy(w, bytes.NewReader(body))

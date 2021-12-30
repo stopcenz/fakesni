@@ -5,16 +5,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
+	tris "github.com/stopcenz/tls-tris"
 )
 
 // around https://github.com/ValdikSS/GoodbyeDPI/issues/71
 
 const DEFAULT_HOST   = "rutracker.org"
 const DEFAULT_PORT   = "443"
-const DEFAULT_IP     = "195.82.146.214"
+const DEFAULT_IP     = "45.132.105.85"
 const FAKE_SNI       = "vk.com"
 const LISTEN_ADDRESS = "127.0.0.1"
 const LISTEN_PORT    = 10000
@@ -27,6 +29,9 @@ type Alias struct {
 	IP         string  // "195.82.146.214"
 	ListenPort int     // 10000
 	Addr       string  // "127.0.0.1:10001"
+	Client     *http.Client
+	EsniKeys   *tris.ESNIKeys
+	TrisConfig *tris.Config
 }
 
 type Aliases []*Alias
@@ -36,7 +41,6 @@ type Config struct {
 	Aliases       Aliases
 	FakeSNI       string
 	IgnoreCert    bool
-	TLS13         bool
 	NoBrowser     bool
 }
 
@@ -64,13 +68,12 @@ func (alias *Aliases) Set(host string) error {
 }
 
 func main() {
-	log.Print("Starting FakeSNI " + Version)
+	log.Print("FakeSNI " + Version)
 	config := &Config{}
 	listenAddress  := flag.String("addr", LISTEN_ADDRESS, "Local address. Set to 0.0.0.0 for listen all network interfaces.")
 	listenPort     := flag.Int("port", LISTEN_PORT, "Port to run on.")
 	flag.Var(&(config.Aliases), "host", "Remote host.")
 	fakeSNI        := flag.String("sni", FAKE_SNI, "Value of fake SNI.")
-	tls13          := flag.Bool("tls13", false, "Enable TLS 1.3.")
 	ignoreCert     := flag.Bool("ignorecert", false, "Skip certificate verification.")
 	nobrowser      := flag.Bool("nobrowser", false, "Don't start browser.")
 	flag.Parse()
@@ -87,9 +90,7 @@ func main() {
 	config.ListenAddress = *listenAddress
 	config.FakeSNI       = *fakeSNI
 	config.IgnoreCert    = *ignoreCert
-	config.TLS13         = *tls13
 	config.NoBrowser     = *nobrowser
-	log.Print("Using SNI value '" + config.FakeSNI + "'")
 	if config.IgnoreCert {
 		log.Print("Verify site certificate disabled")
 	}
@@ -101,7 +102,14 @@ func main() {
 	for n, alias := range config.Aliases {
 		alias.ListenPort = *listenPort + n
 		alias.Addr = fmt.Sprintf("%s:%d", local, alias.ListenPort)
-		ip, err := getIp(alias.Hostname)
+		ip, esniKeys, err := getIp(alias.Hostname)
+		
+		if esniKeys == nil {
+			log.Print("Using SNI value '" + config.FakeSNI + "' for " + alias.Hostname)
+		} else {
+			log.Print("Сonnect with ESNI to " + alias.Hostname)
+			alias.EsniKeys = esniKeys
+		}
 		if err == nil {
 			alias.IP = ip
 		}
