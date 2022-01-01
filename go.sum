@@ -1,5 +1,7 @@
 github.com/cloudflare/sidh v0.0.0-20190228162259-d2f0f90e08aa h1:2pQJShMsIfrl5+NnJRzWSmp6FDUZY3LcnviKOYn9qWM=
 github.com/cloudflare/sidh v0.0.0-20190228162259-d2f0f90e08aa/go.mod h1:o/DcCuWFr9jFzwO+c3y1hhwqKHHKfJ7HvLhWUwRnqfo=
+github.com/cloudflare/tls-tris v0.0.0-20190927081502-7bb4b4617eba h1:oK0EXVFoMWPonOmp2wluz/mpHnZtCbBoO3Z7GwKzcQo=
+github.com/cloudflare/tls-tris v0.0.0-20190927081502-7bb4b4617eba/go.mod h1:fIRNL5+voOTImKIoyvskkSLmWQRb+LL7E9hPsDiwAQ0=
 github.com/henrydcase/nobs v0.0.0-20210422124615-3a8ac85da11b h1:pr3HoGXC9qTsyOeON9+TZhwD0mSdJwLlG0WgMaclWlQ=
 github.com/henrydcase/nobs v0.0.0-20210422124615-3a8ac85da11b/go.mod h1:+liTPsuK0xSOSyNKhVz4h7Khig8zW4NcvxdVbzS0Jyw=
 github.com/likexian/doh-go v0.6.4 h1:UnTrIVAOwkBvKU6qOt2W3C5yC9/YO02UVPPcN26iZDY=

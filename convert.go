@@ -92,34 +92,31 @@ func convertLocation(aliases Aliases, value string) string {
 	return convertUrl(aliases, value)
 }
 
-func decode(response *http.Response) ([]byte, error) {
+func decode(response *http.Response) (io.Reader, error) {
 	encoding := response.Header.Get("Content-Encoding")
+	if encoding == "" {
+		return response.Body, nil
+	}
 	re := regexp.MustCompile(`(?i)(^|,| )gzip($|,| )`)
 	if !re.MatchString(encoding) {
-		return ioutil.ReadAll(response.Body)
+		return response.Body, nil
 	}
-	zr, err := gzip.NewReader(response.Body)
-	if err != nil {
-		return nil, err
-	}
-	body, err := ioutil.ReadAll(zr)
-	if err != nil {
-		return nil, err
-	}
-	err = zr.Close()
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
+	return gzip.NewReader(response.Body)
 }
 
 func convertHtml(aliases   Aliases,
                  response *http.Response,
                  w         http.ResponseWriter) {
 
-	body, err := decode(response)
+	reader, err := decode(response)
 	if err != nil {
-		log.Print("Error: convert html: " + err.Error())
+		log.Print("Error: decode: " + err.Error())
+		http.Error(w, err.Error(), 500)
+		return
+	}	
+	body, err := ioutil.ReadAll(reader)
+	if err != nil {
+		log.Print("Error: convert: " + err.Error())
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -137,7 +134,7 @@ func convertHtml(aliases   Aliases,
 	w.Header().Del("Content-Encoding")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	w.WriteHeader(response.StatusCode)
-	_, err = io.Copy(w, bytes.NewReader(body))
+	 _, err = io.Copy(w, bytes.NewReader(body))
 	if err != nil {
 		log.Print("Error: convert: " + err.Error())
 	}

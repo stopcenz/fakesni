@@ -41,7 +41,6 @@ func fetchWithEsni(config *Config,
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 	err = request.Write(conn)
 	if err != nil {
 		return nil, err

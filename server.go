@@ -20,7 +20,6 @@ func startServer(config *Config, srvIndex int, wg sync.WaitGroup) {
 			http.Error(w, "Proxy error\r\n" + err.Error(), 500)
 			return
 		}
-		defer response.Body.Close()
 		convertResponse(config.Aliases, response, w, r)
 	})
 	addr := fmt.Sprintf("%s:%d", config.ListenAddress, alias.ListenPort)
