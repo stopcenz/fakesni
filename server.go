@@ -11,16 +11,15 @@ import (
 const READ_TO = 60 * time.Second
 const WRITE_TO = 60 * time.Second
 
-func startServer(config *Config, srvIndex int, wg sync.WaitGroup) {
+func startServer(srvIndex int, wg sync.WaitGroup) {
 	alias := config.Aliases[srvIndex]
 	handler := http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
-		response, err := fetch(config, alias, r)
+		err := fetchAndWrite(alias, w, r)
 		if err != nil {
-			log.Print("Error: ", err.Error())
-			http.Error(w, "Proxy error\r\n" + err.Error(), 500)
+			log.Print("Error: server: ", err.Error())
+			http.Error(w, "Connection error \r\n" + err.Error(), 500)
 			return
 		}
-		convertResponse(config.Aliases, response, w, r)
 	})
 	addr := fmt.Sprintf("%s:%d", config.ListenAddress, alias.ListenPort)
 	log.Print("Start listening " + addr)
@@ -32,6 +31,9 @@ func startServer(config *Config, srvIndex int, wg sync.WaitGroup) {
 		MaxHeaderBytes: 0xffff,
 	}
 	host := alias.Hostname
+	if host == "0.0.0.0" {
+		host = "localhost"
+	}
 	if alias.Port != "443" {
 		host += ":" + alias.Port
 	}

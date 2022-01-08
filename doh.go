@@ -9,55 +9,67 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"github.com/likexian/doh-go"
+	//"github.com/likexian/doh-go"
 	"github.com/likexian/doh-go/dns"
 	tris "github.com/stopcenz/tls-tris"
+	//tris "tris"
 )
 
 const typeA = 1
 const typeCNAME = 5
 const typeTXT = 16
 
-func getIp(hostname string) (ip string, esniKeys *tris.ESNIKeys, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+func seekEsniKeys(hostname string) *tris.ESNIKeys {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-
-	// init doh client, auto select the fastest provider base on your like
-	// you can also use as: c := doh.Use(), it will select from all providers
-	c := doh.Use(doh.CloudflareProvider, doh.GoogleProvider, doh.Quad9Provider)
-
-	// do doh query
-	rsp, err := c.Query(ctx, dns.Domain("_esni." + hostname), dns.TypeTXT)
+	rsp, err := dohClient.Query(
+		ctx,
+		dns.Domain("_esni." + hostname),
+		dns.TypeTXT,
+	)
 	if err != nil {
-		log.Print("Get ESNI keys of ", hostname, ": ", err.Error())
-	} else {
-		for _, a := range rsp.Answer {
-			if a.Type != typeTXT {
-				continue
-			}
-			// Quad9Provider response is a quoted string
-			txt := strings.Trim(a.Data, " \t\"'")
-			rawEsniKeys, err := base64.StdEncoding.DecodeString(txt)
-		
-			if err != nil {
-				log.Print("DecodeString: ", err.Error())
-			} else {
-				esniKeys, err = tris.ParseESNIKeys(rawEsniKeys)
-				if err == nil {
-					break
-				} else {
-					esniKeys = nil
-					log.Print("ParseESNIKeys: ", err.Error())
-				}
-			}
+		//log.Print("Get ESNI keys of ", hostname, ": ", err.Error())
+		return nil
+	}
+	for _, a := range rsp.Answer {
+		if a.Type != typeTXT {
+			continue
 		}
+		// Quad9 response is a quoted string
+		data := strings.Trim(a.Data, " \t\"'")
+		rawEsniKeys, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			log.Print("Error: DoH DecodeString: ", err.Error())
+			continue
+		}
+		esniKeys, err := tris.ParseESNIKeys(rawEsniKeys)
+		if err == nil {
+			return esniKeys
+		}
+		log.Print("Error: DoH ParseESNIKeys: ", err.Error())
 	}
-	rsp, err = c.Query(ctx, dns.Domain(hostname), dns.TypeA)
+	return nil
+}
+
+func renewEsniKeys(c *tris.Config) {
+	if c == nil || c.ClientESNIKeys == nil {
+		return
+	}
+	esniKeys := seekEsniKeys(c.ServerName)
+	if esniKeys != nil {
+		c.ClientESNIKeys = esniKeys
+	}
+}
+
+func resolve(hostname string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	rsp, err := dohClient.Query(ctx, dns.Domain(hostname), dns.TypeA)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
-	c.Close()
-	names := []string{hostname}
+	names := []string{ hostname }
 	for _, a := range rsp.Answer {
 		if a.Type == typeCNAME {
 			names = append(names, strings.Trim(a.Data, "."))
@@ -75,7 +87,7 @@ func getIp(hostname string) (ip string, esniKeys *tris.ESNIKeys, err error) {
 		}
 	}
 	if len(ips) < 1 {
-		return "", nil, errors.New("DoH: No match was found for '" + hostname + "'")
+		return "", errors.New("DoH: No match was found for '" + hostname + "'")
 	}
-	return ips[rand.Intn(len(ips))], esniKeys, nil
+	return ips[rand.Intn(len(ips))], nil
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -12,6 +14,9 @@ import (
 	"regexp"
 	"strings"
 )
+
+const DBG = false
+const MAX_HTML_BODY = 1e8
 
 var allHosts string = ""
 var bodyRe *regexp.Regexp
@@ -92,32 +97,43 @@ func convertLocation(aliases Aliases, value string) string {
 	return convertUrl(aliases, value)
 }
 
-func decode(response *http.Response) (io.Reader, error) {
-	encoding := response.Header.Get("Content-Encoding")
-	if encoding == "" {
-		return response.Body, nil
+func decode(response *http.Response) ([]byte, error) {
+	reader := response.Body
+	ce := response.Header.Get("Content-Encoding")
+	encodings := strings.Split(ce, ",")
+	for i := len(encodings) - 1; i >= 0; i-- {
+		switch strings.ToLower(strings.Trim(encodings[i], " \t")) {
+			case "":
+			case "chunked":
+			case "gzip":
+				gr, err := gzip.NewReader(reader)
+				if err != nil {
+					return nil, err
+				}
+				defer gr.Close()
+				reader = gr
+			case "deflate":
+				dr, err := zlib.NewReader(reader)
+				if err != nil {
+					return nil, err
+				}
+				defer dr.Close()
+				reader = dr
+			default:
+				return nil, errors.New("Content-Encoding '" + ce + "' not supported.")
+		}
 	}
-	re := regexp.MustCompile(`(?i)(^|,| )gzip($|,| )`)
-	if !re.MatchString(encoding) {
-		return response.Body, nil
-	}
-	return gzip.NewReader(response.Body)
+	return ioutil.ReadAll(io.LimitReader(reader, MAX_HTML_BODY))
 }
 
 func convertHtml(aliases   Aliases,
                  response *http.Response,
                  w         http.ResponseWriter) {
 
-	reader, err := decode(response)
+	body, err := decode(response)
 	if err != nil {
-		log.Print("Error: decode: " + err.Error())
-		http.Error(w, err.Error(), 500)
-		return
-	}	
-	body, err := ioutil.ReadAll(reader)
-	if err != nil {
-		log.Print("Error: convert: " + err.Error())
-		http.Error(w, err.Error(), 500)
+		log.Print("Error: decode: ", err.Error())
+		http.Error(w, "Decode error\r\n" + err.Error(), 500)
 		return
 	}
 	body = bodyRe.ReplaceAllFunc(body, func (b []byte) []byte {
@@ -134,9 +150,10 @@ func convertHtml(aliases   Aliases,
 	w.Header().Del("Content-Encoding")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	w.WriteHeader(response.StatusCode)
-	 _, err = io.Copy(w, bytes.NewReader(body))
-	if err != nil {
-		log.Print("Error: convert: " + err.Error())
+	_, err = io.Copy(w, bytes.NewReader(body))
+	if err != nil && DBG {
+		s := response.Request.Method + " " + response.Request.URL.RequestURI()
+		log.Print("Error: convert html: ", err.Error(), " - ", s)
 	}
 }
 
@@ -150,7 +167,11 @@ func convertBody(aliases   Aliases,
 		return
 	}
 	w.WriteHeader(response.StatusCode)
-	io.Copy(w, response.Body)
+	_, err := io.Copy(w, response.Body)
+	if err != nil && DBG {
+		s := response.Request.Method + " " + response.Request.URL.RequestURI()
+		log.Print("Error: convert body: ", err.Error(), " - ", s)
+	}
 }
 
 func convertHeader(aliases   Aliases,

@@ -9,17 +9,18 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"github.com/likexian/doh-go"
 	tris "github.com/stopcenz/tls-tris"
+	//tris "tris"
 )
 
 // around https://github.com/ValdikSS/GoodbyeDPI/issues/71
 
-const DEFAULT_HOST   = "rutracker.org"
-const DEFAULT_PORT   = "443"
-const DEFAULT_IP     = "45.132.105.85"
-const FAKE_SNI       = "vk.com"
-const LISTEN_ADDRESS = "127.0.0.1"
-const LISTEN_PORT    = 10000
+const DEFAULT_HOST     = "rutracker.org"
+const DEFAULT_PORT     = "443"
+const DEFAULT_IP       = "45.132.105.85"
+const LISTEN_ADDRESS   = "127.0.0.1"
+const LISTEN_PORT      = 10000
 
 var Version = "v0.0" // updated automatically
 
@@ -30,8 +31,8 @@ type Alias struct {
 	ListenPort int     // 10000
 	Addr       string  // "127.0.0.1:10001"
 	Client     *http.Client
-	EsniKeys   *tris.ESNIKeys
 	TrisConfig *tris.Config
+	Mute       bool
 }
 
 type Aliases []*Alias
@@ -40,9 +41,14 @@ type Config struct {
 	ListenAddress string
 	Aliases       Aliases
 	FakeSNI       string
+	Padding       int
+	Esni          bool
 	IgnoreCert    bool
 	NoBrowser     bool
+	Auto          bool
 }
+var config *Config
+var dohClient *doh.DoH
 
 func (aliases *Aliases) String() string {
 	a := []string{}
@@ -69,56 +75,64 @@ func (alias *Aliases) Set(host string) error {
 
 func main() {
 	log.Print("FakeSNI " + Version)
-	config := &Config{}
+	config = &Config{}
 	listenAddress  := flag.String("addr", LISTEN_ADDRESS, "Local address. Set to 0.0.0.0 for listen all network interfaces.")
 	listenPort     := flag.Int("port", LISTEN_PORT, "Port to run on.")
-	flag.Var(&(config.Aliases), "host", "Remote host.")
-	fakeSNI        := flag.String("sni", FAKE_SNI, "Value of fake SNI.")
-	ignoreCert     := flag.Bool("ignorecert", false, "Skip certificate verification.")
+	flag.Var(&(config.Aliases), "host", "Remote host. Optionally, you can specify the port number.")
+	fakeSNI        := flag.String("sni", "", "Value for SNI. Not sent SNI by default.")
+	padding        := flag.Int("padding", -1, "TLS Padding size (RFC 7685). An offset can be added before the SNI.")
+	esni           := flag.Bool("esni", false, "Enable connections with ESNI.")
+	ignoreCert     := flag.Bool("ignorecert", false, "Skip server certificate verification. Even the hostname is not validated.")
 	nobrowser      := flag.Bool("nobrowser", false, "Don't start browser.")
 	flag.Parse()
 	if *listenPort < 0 || *listenPort > 0xffff {
-		log.Fatal(errors.New("Invalid port"))
+		log.Fatal(errors.New("Invalid network port."))
 	}
+	if *padding < -1 || *padding > 0xffff {
+		log.Fatal(errors.New("Invalid padding. Accepted from -1 to 65535."))
+	}
+	config.ListenAddress = *listenAddress
+	config.FakeSNI       = *fakeSNI
+	config.Padding       = *padding
+	config.Esni          = *esni
+	config.IgnoreCert    = *ignoreCert
+	config.NoBrowser     = *nobrowser
 	if len(config.Aliases) < 1 {
 		config.Aliases = Aliases{&Alias{
 			Hostname : DEFAULT_HOST, 
 			Port     : DEFAULT_PORT, 
 			IP       : DEFAULT_IP,
 		}}
+		log.Print("Parameters not specified. Example configuration applied:")
+		log.Print("$ fakesni -host ", DEFAULT_HOST)
 	}
-	config.ListenAddress = *listenAddress
-	config.FakeSNI       = *fakeSNI
-	config.IgnoreCert    = *ignoreCert
-	config.NoBrowser     = *nobrowser
 	if config.IgnoreCert {
-		log.Print("Verify site certificate disabled")
+		log.Print("Insecure! Verify site certificate disabled.")
 	}
+	config.Auto = config.FakeSNI    == "" && 
+                  config.Esni       == false &&
+                  config.Padding    == -1 &&
+                  config.IgnoreCert == false
 	local := *listenAddress
-	if local == "0.0.0.0" {
-		local = "127.0.0.1"
-	}
+	// init doh client, auto select the fastest provider
+	dohClient = doh.Use(
+		doh.CloudflareProvider, 
+		doh.GoogleProvider, 
+		doh.Quad9Provider,
+	)
+	dohClient.EnableCache(true)
 	var wg sync.WaitGroup
 	for n, alias := range config.Aliases {
 		alias.ListenPort = *listenPort + n
 		alias.Addr = fmt.Sprintf("%s:%d", local, alias.ListenPort)
-		ip, esniKeys, err := getIp(alias.Hostname)
-		
-		if esniKeys == nil {
-			log.Print("Using SNI value '" + config.FakeSNI + "' for " + alias.Hostname)
-		} else {
-			log.Print("Сonnect with ESNI to " + alias.Hostname)
-			alias.EsniKeys = esniKeys
-		}
-		if err == nil {
-			alias.IP = ip
-		}
-		if alias.IP == "" {
+		ip, err := resolve(alias.Hostname)
+		if err != nil {
 			log.Print(err.Error())
-		} else {
-			go startServer(config, n, wg)
-			wg.Add(1)
+			continue
 		}
+		alias.IP = ip
+		go startServer(n, wg)
+		wg.Add(1)
 	}
 	go browserStart(config)
 	wg.Wait()
