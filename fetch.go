@@ -1,227 +1,77 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"math/rand"
-	"net"
-	"net/http"
-	"syscall"
-	"time"
-	tris "github.com/stopcenz/tls-tris"
-	//tris "tris"
 	"log"
+	"math/rand"
+	"net/http"
+	"strings"
+	"time"
 )
 
-func getTrisConfig(alias *Alias) *tris.Config {
-	c := &tris.Config{
-		ServerName: alias.Hostname,
-		FakeServerName: config.FakeSNI,
-		Padding: config.Padding,
-		InsecureSkipVerify: config.IgnoreCert,
-		ClientSessionCache: tris.NewLRUClientSessionCache(0),
-	}
-	if config.Esni {
-		c.ClientESNIKeys = seekEsniKeys(alias.Hostname)
-	}
-	c.VerifyPeerCertificate = func(rawCerts [][]byte, 
-			verifiedChains [][]*x509.Certificate) error {
-		
-		if config.IgnoreCert {
-			return nil
-		}
-		opts := x509.VerifyOptions{
-			DNSName: alias.Hostname,
-			Intermediates: x509.NewCertPool(),
-		}
-		for _, rawCert := range rawCerts[1:] {
-			certs, err := x509.ParseCertificates(rawCert)
-			if err != nil {
-				log.Print("Error: parse certificate: ", err.Error())
-				continue
-			}
-			for _, cert := range certs {
-				opts.Intermediates.AddCert(cert)
-			}
-		}
-		cert0, err := x509.ParseCertificates(rawCerts[0])
-		if err != nil {
-			log.Print("Error: parse certificate: ", err.Error())
-			return err
-		}
-		_, err = cert0[0].Verify(opts)
-		return err
-	}
-	return c
+func logPrint(c *Context, i ...interface{}) {
+	i = append([]interface{}{"[", c.Id, "] "}, i...)
+	log.Print(i...)
 }
 
-func trisDial(alias *Alias) (*tris.Conn, error) {
-	mute := alias.Mute
-	alias.Mute = true
-	trisConfig := alias.TrisConfig
-	if (trisConfig == nil) {
-		trisConfig = getTrisConfig(alias)
+func ptintDigest(c *Context) {
+	if c.Mute {
+		return
 	}
-	print := func(i ...interface{}) {
-		if !mute {
-			log.Print(i...)
-		}
-	}
-	printDigest := func(n int) {
-		if mute {
-			return
-		}
-		if n > 0 {
-			log.Print("Test #", n, " for '", alias.Hostname, "': Connect with extentions:")
-		} else {
-			log.Print("Connect to '", alias.Hostname, "' with extentions:")
-		}
-		if trisConfig.FakeServerName == "" {
-			log.Print("  SNI: disabled,")
-		} else {
-			log.Print("  SNI: enabled, ServerName: '", trisConfig.FakeServerName, "',")
-		}
-		if trisConfig.ClientESNIKeys == nil {
-			log.Print("  ESNI: disabled,")
-		} else {
-			log.Print("  ESNI: enabled, found keys,")
-		}
-		if trisConfig.Padding < 0 {
-			log.Print("  TLS Padding: disabled.")
-		} else {
-			log.Print("  TLS Padding: ", trisConfig.Padding, " bytes.")
-		}
-	}
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(network, address string, c syscall.RawConn) error {
-			print("Socket ready, handshaking...")
-			return nil
-		},	
-	}
-	if config.Esni && trisConfig.ClientESNIKeys == nil {
-		print("ESNI keys not found for '", alias.Hostname, "'.")
-	}
-	nTest := 0
-	// default parameters
-	if config.Auto && alias.TrisConfig == nil {
-		trisConfig.FakeServerName = ""
-		trisConfig.ClientESNIKeys = nil
-		trisConfig.Padding = -1
-		nTest = 1
-	}
-	renewEsniKeys(trisConfig)
-	printDigest(nTest)
-	conn, err := tris.DialWithDialer(
-		dialer,
-		"tcp", 
-		alias.IP + ":" + alias.Port, 
-		trisConfig,
-	)
-	if err == nil {
-		alias.TrisConfig = trisConfig
-		return conn, nil
-	}
-	if !mute || trisConfig == alias.TrisConfig {
-		log.Print("Connection failed: ", err.Error())
-	}
-	if !config.Auto {
-		return nil, err
-	}
-	if trisConfig == alias.TrisConfig {
-		log.Print("Reset configuration for '", alias.Hostname, "'.")
-		alias.Mute = false
-		alias.TrisConfig = nil
-		return trisDial(alias)
-	}
-	// use ESNI
-	esniKeys := seekEsniKeys(alias.Hostname)
-	if esniKeys == nil {
-		print("Test #2 for '", alias.Hostname, "': Error: ESNI keys not found.")
+	if config.Auto {
+		logPrint(c, "Test #", c.Alias.Phase + 1, " for '", c.Alias.Hostname, "':")
 	} else {
-		trisConfig.FakeServerName = ""
-		trisConfig.ClientESNIKeys = esniKeys
-		trisConfig.Padding = -1
-		printDigest(2)
-		conn, err := tris.DialWithDialer(
-			dialer,
-			"tcp", 
-			alias.IP + ":" + alias.Port, 
-			trisConfig,
-		)
-		if err == nil {
-			alias.TrisConfig = trisConfig
-			return conn, nil
-		}
-		print("Connection failed: ", err.Error())
+		logPrint(c, "Connect to '", c.Alias.Hostname, "':")
 	}
-	// apply TLS Padding
-	p := rand.Intn(999) + 12000
-	trisConfig.FakeServerName = alias.Hostname
-	trisConfig.ClientESNIKeys = nil
-	trisConfig.Padding = p
-	printDigest(3)
-	conn, err = tris.DialWithDialer(
-		dialer,
-		"tcp", 
-		alias.IP + ":" + alias.Port, 
-		trisConfig,
-	)
+	if c.Alias.FakeSNI != "" {
+		logPrint(c, "  SNI: '", c.Alias.FakeSNI, "',")
+	}
+	if c.Alias.ESNI {
+		logPrint(c, "  ESNI: enabled,")
+	}
+	if c.Alias.Padding >= 0 {
+		logPrint(c, "  Padding: ", c.Alias.Padding, " bytes,")
+	}
+}
+
+func printResult(c *Context, err error) {
 	if err == nil {
-		alias.TrisConfig = trisConfig
-		return conn, nil
+		if !c.Mute {
+			logPrint(c, "Successful connection with '", c.Alias.Hostname, "'")
+		}
+	} else {
+		c.Alias.Client = nil
+		c.Alias.TrisConfig = nil
+		if c.Request.URL.RequestURI() != "/favicon.ico" {
+			logPrint(c, "Error: ", err.Error())
+		}
 	}
-	print("Connection failed: ", err.Error())
-	return nil, err
 }
 
-func trisFetch(alias    *Alias, 
-		       fetchReq *http.Request,
-		       w        http.ResponseWriter,
-		       r        *http.Request) error {
-	
-	mute := alias.Mute
-	conn, err := trisDial(alias)
-	if err != nil {
+func fetchRequest(c *Context, req *http.Request) error {
+	var err error
+	ptintDigest(c)
+	if c.Alias.ESNI || c.Alias.Padding >= 0 {
+		err = trisRequest(c, req)
+		printResult(c, err)
 		return err
 	}
-	// Maybe no conn.Close() call required. The http lib will do the right thing.
-	defer conn.Close()
-	if !mute {
-		log.Print("Successful connection to '", alias.Hostname, "'.")
-	}
-	err = fetchReq.Write(conn)
-	if err != nil {
-		return err
-	}
-	fetchRes, err := http.ReadResponse(bufio.NewReader(conn), fetchReq)
-	if err != nil {
-		return err
-	}
-	defer fetchRes.Body.Close()
-	convertResponse(config.Aliases, fetchRes, w, r)
-	return nil
-}
-
-func httpFetch(alias  *Alias,
-		fetchReq *http.Request, 
-		w http.ResponseWriter, 
-		r *http.Request) error {
-		
-	if alias.Client == nil {
+	client := c.Alias.Client
+	if client == nil {
 		// https://golang.org/src/crypto/tls/example_test.go
 		tlsConfig := &tls.Config{
 			// Set InsecureSkipVerify to skip the default validation we are
 			// replacing. This will not disable VerifyConnection.
 			InsecureSkipVerify: true,
-			ServerName: config.FakeSNI, // the magic is here
+			ServerName: c.Alias.FakeSNI, // the magic is here
 			VerifyConnection: func(cs tls.ConnectionState) error {
 				if config.IgnoreCert {
 					return nil
 				}
 				opts := x509.VerifyOptions{
-					DNSName: alias.Hostname, // default is cs.ServerName,
+					DNSName: c.Alias.Hostname, // default is cs.ServerName,
 					Intermediates: x509.NewCertPool(),
 				}
 				for _, cert := range cs.PeerCertificates[1:] {
@@ -232,8 +82,8 @@ func httpFetch(alias  *Alias,
 			},
 		}
 		tr := &http.Transport{
-			MaxIdleConns:           1,
-			IdleConnTimeout:        10 * time.Second,
+			TLSHandshakeTimeout:    config.Timeout,
+			IdleConnTimeout:        60 * time.Second,
 			TLSClientConfig:        tlsConfig,
 			MaxResponseHeaderBytes: 0xffff,
 			WriteBufferSize:        0xffff,
@@ -243,44 +93,109 @@ func httpFetch(alias  *Alias,
 		rp := func (req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
-		alias.Client = &http.Client{
+		client = &http.Client{
 			Transport: tr, 
 			CheckRedirect: rp,
 		}
 	}
-	fetchRes, err := alias.Client.Do(fetchReq)
-	if err != nil {
-		return err
+	res, err := client.Do(req)
+	if err == nil {
+		defer res.Body.Close()
+		err = convertResponse(c, res)
 	}
-	defer fetchRes.Body.Close()
-	convertResponse(config.Aliases, fetchRes, w, r)
-	return nil
+	if err == nil {
+		c.Alias.Client = client
+	}
+	printResult(c, err)
+	return err
 }
 
-func fetchAndWrite(alias  *Alias,
-		           w      http.ResponseWriter,
-		           r      *http.Request) error {
-           
-	ip, err := resolve(alias.Hostname)
-	if err != nil && alias.IP == "" {
+func fetchRequestAuto(c *Context, req *http.Request) error {
+	var err error
+	c.Repeat = true
+	if c.Alias.Client != nil || c.Alias.TrisConfig != nil {
+		err = fetchRequest(c, req)
+		if err != nil {
+			c.Alias.Phase = 0
+			c.Alias.Mute = false
+		}
 		return err
 	}
-	if ip != "" {
-		alias.IP = ip
-	}
-	u := "https://" + alias.IP + ":" + alias.Port + r.URL.RequestURI()
-	fetchReq, err := http.NewRequest(r.Method, u, r.Body)
-	if err != nil {
-		return err
-	}
-	fetchReq.Header = r.Header.Clone()
-	fetchReq.Header.Set("Accept-Encoding", "gzip, deflate")
-	fetchReq.Header.Set("Connection", "close")
-	fetchReq.Close = true
-	if alias.Port == "443" {
-		fetchReq.Host = alias.Hostname
+	if c.Alias.DomainFronting != "" {
+		c.Alias.FakeSNI = randString(6, 16) + c.Alias.DomainFronting
+		c.Alias.ESNI = false
+		c.Alias.Padding = -1
+	} else if c.Alias.Phase == 0 {			// Test #1
+		c.Alias.FakeSNI = genWhiteHost()
+		c.Alias.ESNI = false
+		c.Alias.Padding = -1
+	} else if c.Alias.Phase == 1 {			// Test #2
+		c.Alias.FakeSNI = ""
+		c.Alias.ESNI = true
+		c.Alias.Padding = -1
+	} else if c.Alias.Phase == 2 {			// Test #3
+		// more https://habr.com/ru/post/477696/
+		c.Alias.FakeSNI = genWhiteHost()
+		c.Alias.ESNI = true
+		c.Alias.Padding = -1
+	} else if c.Alias.Phase == 3 {			// Test #4
+		c.Alias.FakeSNI = c.Alias.Hostname
+		c.Alias.ESNI = false
+		c.Alias.Padding = rand.Intn(999) + 12000
+	} else if c.Alias.Phase == 4 {			// Test #5
+		c.Alias.FakeSNI = c.Alias.Hostname
+		c.Alias.ESNI = false
+		c.Alias.Padding = -1
+	} else if c.Alias.Phase == 5 {			// Test #6
+		c.Alias.FakeSNI = c.Alias.Hostname
+		c.Alias.ESNI = false
+		c.Alias.Padding = rand.Intn(999) + 13000
+		c.Repeat = false
 	} else {
-		fetchReq.Host = alias.Hostname + ":" + alias.Port
+		if DBG {
+			logPrint(c, "Error: Fetch: Unknown phase: ", c.Alias.Phase)
+		}
+		c.Alias.Phase = 0
+		return fetchRequestAuto(c, req)
 	}
-	return trisFetch(alias, fetchReq, w, r)
+	err = fetchRequest(c, req)
+	if err != nil {
+		c.Alias.Phase += 1
+	}
+	return err
 }
+
+func fetch(c *Context) error {
+	err := resolve(c)
+	if err != nil {
+		if c.Alias.Hostname != DEFAULT_HOST {
+			return err
+		}
+		logPrint(c, err)
+		c.Alias.IPs = strings.Split(DEFAULT_IPS, "|")
+		resolve(c)
+	}
+	u := "https://" + c.IP + ":" + c.Alias.Port + c.Request.URL.RequestURI()
+	if DBG {
+		logPrint(c, c.Request.Method, " ", u)
+	}
+	rc, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(rc, c.Request.Method, u, c.Request.Body)
+	if err != nil {
+		logPrint(c, "Fetch error: ", err.Error())
+		return err
+	}
+	req.Header = c.Request.Header.Clone()
+	req.Header.Del("Range")
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Host = c.Alias.Hostname
+	if config.Auto {
+		return fetchRequestAuto(c, req)
+	}
+	c.Alias.FakeSNI = config.FakeSNI
+	c.Alias.ESNI = config.ESNI
+	c.Alias.Padding = config.Padding
+	return fetchRequest(c, req)
+}
+

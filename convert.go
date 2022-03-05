@@ -15,7 +15,6 @@ import (
 	"strings"
 )
 
-const DBG = false
 const MAX_HTML_BODY = 1e8
 
 var allHosts string = ""
@@ -25,29 +24,29 @@ var secureRe *regexp.Regexp = regexp.MustCompile(`(?i);\s*secure[^;]*`)
 var hostRe *regexp.Regexp = regexp.MustCompile(`^([^:])(:([0-9]+)|)$`)
 var trimPortRe *regexp.Regexp = regexp.MustCompile(`:.*`)
 
-func convertInit(aliases Aliases) {
+func convertInit() {
 	if allHosts != "" {
 		return
 	}
 	hosts := []string{}
-	for _, alias := range aliases {
+	for _, alias := range config.Aliases {
 		if alias.Port == "443" {
-			hosts = append(hosts, alias.Hostname)		
+			hosts = append(hosts, alias.Hostname)
 		}
 		hosts = append(hosts, alias.Hostname + ":" + alias.Port)
 	}
 	allHosts = strings.Join(hosts, "|")
 	domainRe = regexp.MustCompile(`(?i)(;\s*domain=\.?)(` + allHosts + ")[^;]*")
 	bodyRe = regexp.MustCompile(`(?i)(\<[^\<\>]+\s(src|href|action)=('|"|))` +
-                                    `((https?:|)\/\/(` + allHosts + `))([^a-z0-9])`)
+	                            `((https?:|)\/\/(` + allHosts + `))([^a-z0-9])`)
 }
 
-func convertHost(aliases Aliases, hostname string, port string) (string, bool) {
+func convertHost(hostname string, port string) (string, bool) {
 	hostname = strings.ToLower(hostname)
 	if port == "" {
 		port = "443"
 	}
-	for _, alias := range aliases {
+	for _, alias := range config.Aliases {
 		if hostname != alias.Hostname {
 			continue
 		}
@@ -59,12 +58,12 @@ func convertHost(aliases Aliases, hostname string, port string) (string, bool) {
 	return "", false
 }
 
-func convertUrl(aliases Aliases, urlString string) string {
+func convertUrl(urlString string) string {
 	u, err := url.Parse(urlString)
 	if err != nil {
 		return urlString
 	}
-	host, ok := convertHost(aliases, u.Hostname(), u.Port())
+	host, ok := convertHost(u.Hostname(), u.Port())
 	if !ok {
 		return urlString
 	}
@@ -75,11 +74,8 @@ func convertUrl(aliases Aliases, urlString string) string {
 	return u.String()
 }
 
-func convertSetCookie(aliases  Aliases,
-                      value    string,
-                      r       *http.Request) string {
-
-	host := r.Header.Get("Host")
+func convertSetCookie(c *Context, value string) string {
+	host := c.Request.Header.Get("Host")
 	if host == "" {
 		zeroHostRe := regexp.MustCompile(`(?i);\s*domain=[^;]*`)
 		value = zeroHostRe.ReplaceAllString(value, "")
@@ -93,21 +89,28 @@ func convertSetCookie(aliases  Aliases,
 	return value
 }
 
-func convertLocation(aliases Aliases, value string) string {
-	return convertUrl(aliases, value)
+func convertLocation(c *Context, value string) string {
+	return convertUrl(value)
 }
 
-func decode(response *http.Response) ([]byte, error) {
-	reader := response.Body
-	ce := response.Header.Get("Content-Encoding")
+func decode(res *http.Response) ([]byte, error) {
+	if res.Header.Get("Content-Length") == "0" {
+		return []byte{}, nil
+	}
+	reader := res.Body
+	ce := res.Header.Get("Content-Encoding")
 	encodings := strings.Split(ce, ",")
 	for i := len(encodings) - 1; i >= 0; i-- {
 		switch strings.ToLower(strings.Trim(encodings[i], " \t")) {
 			case "":
+			case "identity":
 			case "chunked":
+				// chunked encoding is
+				// automatically removed as necessary when receiving requests
 			case "gzip":
 				gr, err := gzip.NewReader(reader)
 				if err != nil {
+					log.Print("Error while decode '", ce, "'")
 					return nil, err
 				}
 				defer gr.Close()
@@ -115,6 +118,7 @@ func decode(response *http.Response) ([]byte, error) {
 			case "deflate":
 				dr, err := zlib.NewReader(reader)
 				if err != nil {
+					log.Print("Error while decode '", ce, "'")
 					return nil, err
 				}
 				defer dr.Close()
@@ -126,15 +130,10 @@ func decode(response *http.Response) ([]byte, error) {
 	return ioutil.ReadAll(io.LimitReader(reader, MAX_HTML_BODY))
 }
 
-func convertHtml(aliases   Aliases,
-                 response *http.Response,
-                 w         http.ResponseWriter) {
-
-	body, err := decode(response)
+func convertHtml(c *Context, res *http.Response) error {
+	body, err := decode(res)
 	if err != nil {
-		log.Print("Error: decode: ", err.Error())
-		http.Error(w, "Decode error\r\n" + err.Error(), 500)
-		return
+		return err
 	}
 	body = bodyRe.ReplaceAllFunc(body, func (b []byte) []byte {
 		m := bodyRe.FindSubmatch(b)
@@ -144,62 +143,70 @@ func convertHtml(aliases   Aliases,
 		head := m[1]
 		u := m[4]
 		tail := m[7]
-		u = []byte(convertUrl(aliases, string(u)))
+		u = []byte(convertUrl(string(u)))
 		return append(append(head, u...), tail...)
 	})
+	w := c.ResponseWriter
 	w.Header().Del("Content-Encoding")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	w.WriteHeader(response.StatusCode)
+	c.WriteHeader(res.StatusCode)
 	_, err = io.Copy(w, bytes.NewReader(body))
 	if err != nil && DBG {
-		s := response.Request.Method + " " + response.Request.URL.RequestURI()
+		s := res.Request.Method + " " + res.Request.URL.RequestURI()
 		log.Print("Error: convert html: ", err.Error(), " - ", s)
 	}
+	return nil
 }
 
-func convertBody(aliases   Aliases,
-                 response *http.Response,
-                 w         http.ResponseWriter) {
-
-	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+func convertBody(c *Context, res *http.Response) error {
+	contentType := strings.ToLower(res.Header.Get("Content-Type"))
 	if strings.HasPrefix(contentType, "text/html") {
-		convertHtml(aliases, response, w)
-		return
+		return convertHtml(c, res)
 	}
-	w.WriteHeader(response.StatusCode)
-	_, err := io.Copy(w, response.Body)
+	// Preread first 1MB of body.
+	// This is needed to handle the case where the connection was dropped.
+	buf, err := ioutil.ReadAll(io.LimitReader(res.Body, 1e6))
+	if err != nil {
+		log.Print("Convert: Connection dropped: ", err.Error())
+		return err
+	}
+	c.WriteHeader(res.StatusCode)
+	_, err = c.ResponseWriter.Write(buf)
+	if err == nil {
+		_, err = io.Copy(c.ResponseWriter, res.Body)
+	}
 	if err != nil && DBG {
-		s := response.Request.Method + " " + response.Request.URL.RequestURI()
-		log.Print("Error: convert body: ", err.Error(), " - ", s)
+		log.Print("DBG: Error: convert body: ", err.Error())
+		log.Print("  ", res.Request.Method, " ", c.Request.URL.RequestURI())
 	}
+	return nil
 }
 
-func convertHeader(aliases   Aliases,
-                   response *http.Response,
-                   w         http.ResponseWriter,
-                   r        *http.Request) {
-
-	for key, values := range response.Header {
+func convertHeader(c *Context, res *http.Response) {
+	for key, values := range res.Header {
 		for _, value := range values {
 			if key == "Location" {
-				value = convertLocation(aliases, value)
+				value = convertLocation(c, value)
 			}
 			if key == "Set-Cookie" {
-				value = convertSetCookie(aliases, value, r)
+				value = convertSetCookie(c, value)
 			}
 			if len(value) > 0 {
-				w.Header().Add(key, value)
+				c.ResponseWriter.Header().Add(key, value)
 			}
 		}
 	}
+	if config.NoScript {
+		c.ResponseWriter.Header().Add("Content-Security-Policy", "script-src 'none';")
+	}
 }
 
-func convertResponse(aliases   Aliases,
-                     response *http.Response,
-                     w         http.ResponseWriter,
-                     r        *http.Request) {
-
-	convertInit(aliases)
-	convertHeader(aliases, response, w, r)
-	convertBody(aliases, response, w)
+func convertResponse(c *Context, res *http.Response) error {
+	convertInit()
+	convertHeader(c, res)
+	if res.Request.Method != http.MethodHead {
+		return convertBody(c, res)
+	}
+	return nil
 }
+

@@ -1,6 +1,6 @@
 # https://www.digitalocean.com/community/tutorials/how-to-build-go-executables-for-multiple-platforms-on-ubuntu-16-04
 
-VERSION=v1.4
+VERSION=v1.5
 
 export CGO_ENABLED=0
 export GO386=softfloat

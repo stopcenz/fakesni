@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-func browserStart(config *Config) {
+func browserStart() {
 	time.Sleep(1 * time.Second)
 	alias := config.Aliases[0]
-	u := fmt.Sprintf("http://" + alias.Addr)
-	fmt.Println("\r\nAccess to " + alias.Hostname + " via the following URL: " + u)
+	u := "http://" + alias.Addr
 	if config.NoBrowser {
+		fmt.Println("\r\nAccess to '" + alias.Host + "' via the following URL: " + u)
 		return
 	}
 	// https://dwheeler.com/essays/open-files-urls.html
@@ -34,6 +34,6 @@ func browserStart(config *Config) {
 	}
 	err := exec.Command(cmd, arg).Start()
 	if err != nil {
-		log.Print("Error " + err.Error())
+		log.Print("Error: " + err.Error())
 	}
 }

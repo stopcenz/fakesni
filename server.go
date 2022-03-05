@@ -1,6 +1,7 @@
 package main
 
 import (
+	//"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,17 +9,60 @@ import (
 	"time"
 )
 
-const READ_TO = 60 * time.Second
-const WRITE_TO = 60 * time.Second
+const READ_TO = 120 * time.Second
+const WRITE_TO = 120 * time.Second
 
-func startServer(srvIndex int, wg sync.WaitGroup) {
-	alias := config.Aliases[srvIndex]
+type Context struct {
+	Id string
+	Alias *Alias
+	IP string
+	Request *http.Request
+	ResponseWriter http.ResponseWriter
+	HeadersSent bool
+	DomainFronting string
+	Mute bool
+	Repeat bool
+}
+
+func (c *Context) WriteHeader(status int) {
+	if !c.HeadersSent {
+		c.HeadersSent = true
+		c.ResponseWriter.WriteHeader(status)
+	}
+}
+
+var connId uint64
+
+func startServer(alias *Alias, wg sync.WaitGroup) {
 	handler := http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
-		err := fetchAndWrite(alias, w, r)
-		if err != nil {
-			log.Print("Error: server: ", err.Error())
-			http.Error(w, "Connection error \r\n" + err.Error(), 500)
+		connId += 1
+		c := &Context{
+			Id: fmt.Sprintf("%d", connId),
+			Alias: alias,
+			Request: r,
+			ResponseWriter: w,
+			Mute: alias.Mute,
+		}
+		alias.Mute = true
+		if r.URL.RequestURI() == "/favicon.ico" {
+			c.Mute = true
+		}
+		err := fetch(c)
+		if err == nil {
 			return
+		}
+		alias.Mute = false
+		if c.HeadersSent {
+			return
+		}
+		if c.Repeat {
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("Location", "http://" + alias.Addr + r.URL.RequestURI())
+			c.WriteHeader(307)
+			w.Write([]byte(err.Error()))
+		} else {
+			http.Error(w, "Connection error: " + err.Error(), 500)
 		}
 	})
 	addr := fmt.Sprintf("%s:%d", config.ListenAddress, alias.ListenPort)
@@ -30,14 +74,8 @@ func startServer(srvIndex int, wg sync.WaitGroup) {
 		WriteTimeout:   WRITE_TO,
 		MaxHeaderBytes: 0xffff,
 	}
-	host := alias.Hostname
-	if host == "0.0.0.0" {
-		host = "localhost"
-	}
-	if alias.Port != "443" {
-		host += ":" + alias.Port
-	}
-	log.Print(host + " (" + alias.IP + ") <--> " + alias.Addr)
+	log.Print(alias.Host, " <--> ", alias.Addr)
 	log.Print(server.ListenAndServe())
 	wg.Done()
 }
+
